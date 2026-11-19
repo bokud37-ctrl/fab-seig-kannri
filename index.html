@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ファブラボ機材管理</title>
+<script src="https://unpkg.com/html5-qrcode"></script>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 24px;
+  font-family: Arial, "Noto Sans JP", sans-serif;
+  background: #f2f4f7;
+  color: #202631;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+h1 { margin: 0; font-size: 30px; }
+.subtitle { color: #687385; margin-top: 6px; }
+
+button {
+  border: none;
+  border-radius: 10px;
+  padding: 12px 18px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+button:disabled { opacity: .5; cursor: wait; }
+
+.equipment-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 18px;
+}
+
+.equipment-card {
+  background: white;
+  border-radius: 18px;
+  padding: 22px;
+  box-shadow: 0 3px 12px rgba(0,0,0,.06);
+  border-left: 9px solid #22a06b;
+  cursor: pointer;
+  min-height: 180px;
+  transition: transform .15s;
+}
+
+.equipment-card:hover { transform: translateY(-3px); }
+.equipment-card.busy { border-left-color: #e04d4d; }
+
+.equipment-name {
+  font-size: 23px;
+  font-weight: bold;
+  margin-bottom: 14px;
+}
+
+.status {
+  display: inline-block;
+  border-radius: 20px;
+  padding: 7px 14px;
+  font-size: 17px;
+  font-weight: bold;
+  background: #d9f5e7;
+  color: #087847;
+}
+
+.busy .status {
+  background: #ffe1e1;
+  color: #bd2525;
+}
+
+.info {
+  margin-top: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.usage-time {
+  font-size: 24px;
+  font-weight: bold;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.remaining {
+  font-size: 14px;
+  margin-top: 5px;
+  color: #687385;
+}
+
+.remaining.over {
+  color: #d22d2d;
+  font-weight: bold;
+}
+
+.modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: rgba(0,0,0,.55);
+  justify-content: center;
+  align-items: center;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.modal-content {
+  background: white;
+  width: 100%;
+  max-width: 540px;
+  padding: 26px;
+  border-radius: 18px;
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+.modal-content.wide { max-width: 760px; }
+.modal h2 { margin-top: 0; }
+
+label {
+  display: block;
+  font-weight: bold;
+  margin-top: 14px;
+}
+
+input, select {
+  width: 100%;
+  padding: 13px;
+  margin: 7px 0 12px;
+  border: 1px solid #ccd2dc;
+  border-radius: 9px;
+  font-size: 17px;
+  background-color: white;
+}
+
+.primary {
+  background: #2168d5;
+  color: white;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.secondary {
+  background: #e6e9ef;
+  color: #202631;
+}
+
+.danger {
+  background: #d94848;
+  color: white;
+}
+
+.admin-button {
+  background: #252e3b;
+  color: white;
+}
+
+.fullscreen-button {
+  background: #e0e5ec;
+  color: #202631;
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.button-row button { flex: 1; }
+
+#reader {
+  width: 100%;
+  margin: 14px 0;
+}
+
+.hint {
+  color: #697386;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.admin-section {
+  border-top: 1px solid #e0e4ea;
+  margin-top: 22px;
+  padding-top: 18px;
+}
+
+.admin-item {
+  padding: 12px;
+  border: 1px solid #e0e4ea;
+  border-radius: 10px;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.admin-item button {
+  padding: 9px 12px;
+  font-size: 14px;
+}
+
+.admin-item input { margin: 0; }
+
+.admin-item-info {
+  flex: 1;
+  min-width: 180px;
+}
+
+.loading {
+  text-align: center;
+  padding: 50px;
+  color: #687385;
+}
+
+.quick-return {
+  width: 100%;
+  margin-top: 16px;
+  background: #d94848;
+  color: white;
+  padding: 14px;
+}
+
+.quick-return:hover { background: #bd3030; }
+
+@media (max-width: 600px) {
+  body { padding: 14px; }
+  h1 { font-size: 23px; }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <div>
+    <h1>ファブラボ機材管理</h1>
+    <div class="subtitle">機材の利用状況・返却状況</div>
+  </div>
+
+  <div class="button-row">
+    <button class="fullscreen-button" onclick="toggleFullscreen()">全画面</button>
+    <button class="admin-button" onclick="openAdminLogin()">管理者</button>
+  </div>
+</header>
+
+<main>
+  <div id="equipmentGrid" class="equipment-grid">
+    <div class="loading">機材情報を読み込み中...</div>
+  </div>
+</main>
+
+<!-- 利用開始 -->
+<div id="actionModal" class="modal">
+  <div class="modal-content">
+    <h2 id="actionTitle">機材の利用</h2>
+    <p id="actionEquipmentName"></p>
+
+    <div id="checkoutFields">
+      <label for="groupInput">利用区分</label>
+      <select id="groupInput">
+        <option value="" disabled selected>利用区分を選択してください</option>
+        <option value="授業">授業</option>
+        <option value="研究">研究</option>
+        <option value="サークル">サークル</option>
+        <option value="個人制作">個人制作</option>
+        <option value="その他">その他</option>
+      </select>
+
+      <label for="plannedHours">利用予定時間（時間）</label>
+      <input id="plannedHours" type="number" min="0.25"
+        max="24" step="0.25" placeholder="例：1.5">
+
+      <p class="hint">0.25時間（15分）～24時間まで入力できます。</p>
+    </div>
+
+    <p class="hint">学生証のバーコードを読み取ってください。</p>
+
+    <div id="reader"></div>
+
+    <label for="studentIdInput">学籍番号（手入力も可能）</label>
+    <input id="studentIdInput" placeholder="例：B2024205" autocomplete="off">
+
+    <button class="primary" id="actionSubmit" onclick="submitAction()">
+      利用を開始する
+    </button>
+
+    <div class="button-row">
+      <button class="secondary" onclick="closeActionModal()">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- 管理者ログイン -->
+<div id="adminLoginModal" class="modal">
+  <div class="modal-content">
+    <h2>管理者ログイン</h2>
+
+    <label for="adminPasswordInput">パスワード</label>
+    <input id="adminPasswordInput" type="password">
+
+    <button class="primary" onclick="loginAdmin()">ログイン</button>
+
+    <div class="button-row">
+      <button class="secondary" onclick="closeModal('adminLoginModal')">
+        閉じる
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- 管理者画面 -->
+<div id="adminModal" class="modal">
+  <div class="modal-content wide">
+    <h2>管理者画面</h2>
+
+    <div class="admin-section">
+      <h3>機材の利用状況</h3>
+      <div id="adminUsageList"></div>
+    </div>
+
+    <div class="admin-section">
+      <h3>名簿メンバーの追加（個別）</h3>
+
+      <label for="newStudentId">学籍番号</label>
+      <input id="newStudentId" placeholder="例：B2024205">
+
+      <label for="newStudentName">氏名</label>
+      <input id="newStudentName" placeholder="氏名">
+
+      <button class="primary" onclick="addMember()">名簿に追加</button>
+    </div>
+
+    <div class="admin-section">
+      <h3>名簿のCSV一括登録</h3>
+      <p class="hint">
+        1列目に「学籍番号（B＋数字7桁）」、2列目に「氏名」を入力したCSVファイルを選択してください。<br>
+        ※1行目の見出しや、すでに登録済みの学籍番号は自動でスキップされます。
+      </p>
+
+      <input type="file" id="rosterCsvFile" accept=".csv,text/csv">
+
+      <button class="primary" id="csvUploadBtn" onclick="uploadRosterCsv()">
+        CSVから一括追加
+      </button>
+    </div>
+
+    <div class="admin-section">
+      <h3>機材の追加</h3>
+
+      <label for="newEquipmentId">機材ID</label>
+      <input id="newEquipmentId" placeholder="例：A1mini-5">
+
+      <label for="newEquipmentName">機材名</label>
+      <input id="newEquipmentName" placeholder="例：A1 mini 5号機">
+
+      <button class="primary" onclick="addNewEquipment()">機材を追加</button>
+    </div>
+
+    <div class="admin-section">
+      <h3>機材名の変更</h3>
+      <p class="hint">変更した名前は全員の画面に反映されます。</p>
+      <div id="renameEquipmentList"></div>
+    </div>
+
+    <div class="admin-section">
+      <h3>管理者パスワード変更</h3>
+
+      <input id="newAdminPassword" type="password"
+        placeholder="新しいパスワード">
+
+      <button class="primary" onclick="changeAdminPassword()">
+        変更する
+      </button>
+    </div>
+
+    <div class="button-row">
+      <button class="secondary" onclick="closeAdmin()">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let equipmentData = [];
+let selectedEquipment = null;
+let selectedMode = null;
+let adminPassword = null;
+let scanner = null;
+let scannerStartPromise = null;
+let scannerStopping = false;
+let scannerGeneration = 0;
+
+window.addEventListener('load', () => {
+  loadEquipment();
+  setInterval(loadEquipment, 4000);
+  setInterval(updateUsageTimes, 1000);
+});
+
+// 機材情報取得
+function loadEquipment() {
+  google.script.run
+    .withSuccessHandler(data => {
+      equipmentData = data || [];
+      renderEquipment();
+      renderAdminUsage();
+      renderRenameEquipment();
+    })
+    .withFailureHandler(showError)
+    .getEquipmentStatus();
+}
+
+// 機材カード表示
+function renderEquipment() {
+  const grid = document.getElementById('equipmentGrid');
+  grid.innerHTML = '';
+
+  if (!equipmentData.length) {
+    grid.textContent = '機材データがありません。初期設定を確認してください。';
+    return;
+  }
+
+  equipmentData.forEach(item => {
+    const card = document.createElement('div');
+    card.className = 'equipment-card' + (item.inUse ? ' busy' : '');
+
+    // 空いている機材だけカード全体を利用開始ボタンにする
+    if (!item.inUse) {
+      card.onclick = () => openAction(item);
+    }
+
+    const name = document.createElement('div');
+    name.className = 'equipment-name';
+    name.textContent = item.name;
+
+    const status = document.createElement('div');
+    status.className = 'status';
+    status.textContent = item.inUse ? '使用中' : '空き';
+
+    card.appendChild(name);
+    card.appendChild(status);
+
+    if (item.inUse) {
+      const info = document.createElement('div');
+      info.className = 'info';
+      info.style.whiteSpace = 'pre-line';
+
+      info.textContent =
+        '利用者：' + item.userName +
+        '\n利用区分：' + (item.group || '未選択') +
+        '\n利用予定：' + formatPlanned(item.plannedMinutes);
+
+      card.appendChild(info);
+
+      const time = document.createElement('div');
+      time.className = 'usage-time';
+      time.dataset.startTime = item.startTime || '';
+      time.textContent = formatDuration(item.startTime);
+      card.appendChild(time);
+
+      const remaining = document.createElement('div');
+      remaining.className = 'remaining';
+      remaining.dataset.endTime = item.plannedEndTime || '';
+      remaining.textContent = getRemainingText(item.plannedEndTime);
+      card.appendChild(remaining);
+
+      // ワンタップ返却ボタン
+      const returnButton = document.createElement('button');
+      returnButton.className = 'quick-return';
+      returnButton.textContent = 'この機材を返却する';
+
+      returnButton.onclick = event => {
+        event.stopPropagation();
+        quickReturn(item);
+      };
+
+      card.appendChild(returnButton);
+
+    } else {
+      const hint = document.createElement('div');
+      hint.className = 'info';
+      hint.textContent = 'タップして利用開始';
+      card.appendChild(hint);
+    }
+
+    grid.appendChild(card);
+  });
+}
+
+// ワンタップ返却
+function quickReturn(item) {
+  if (!confirm(
+    item.name + ' を返却しますか？\n\n' +
+    '利用者：' + item.userName + '\n' +
+    '返却すると利用状況が空きになります。'
+  )) {
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(message => {
+      alert(message);
+      loadEquipment();
+    })
+    .withFailureHandler(showError)
+    .quickReturnEquipment(item.id);
+}
+
+// 利用予定時間表示
+function formatPlanned(minutes) {
+  if (!minutes) return '未設定';
+
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+
+  if (hours && mins) return hours + '時間' + mins + '分';
+  if (hours) return hours + '時間';
+  return mins + '分';
+}
+
+// 経過時間表示
+function formatDuration(startTime) {
+  if (!startTime) return '--:--:--';
+
+  const seconds = Math.max(
+    0,
+    Math.floor((Date.now() - Number(startTime)) / 1000)
+  );
+
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+
+  return [h, m, s]
+    .map(v => String(v).padStart(2, '0'))
+    .join(':');
+}
+
+// 残り時間表示
+function getRemainingText(endTime) {
+  if (!endTime) return '予定終了時刻：未設定';
+
+  const diff = Number(endTime) - Date.now();
+
+  if (diff <= 0) return '予定時間を超過しています';
+
+  const totalMinutes = Math.ceil(diff / 60000);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+
+  return '予定終了まで ' + (h ? h + '時間' : '') + m + '分';
+}
+
+// 時間を毎秒更新
+function updateUsageTimes() {
+  document.querySelectorAll('.usage-time, .admin-usage-time')
+    .forEach(element => {
+      element.textContent = formatDuration(element.dataset.startTime);
+    });
+
+  document.querySelectorAll('.remaining').forEach(element => {
+    element.textContent = getRemainingText(element.dataset.endTime);
+    element.classList.toggle(
+      'over',
+      Number(element.dataset.endTime) <= Date.now()
+    );
+  });
+}
+
+// 利用画面を開く
+function openAction(item) {
+  selectedEquipment = item;
+  selectedMode = 'checkout';
+
+  document.getElementById('actionTitle').textContent = '機材の利用開始';
+  document.getElementById('actionEquipmentName').textContent = item.name;
+  document.getElementById('checkoutFields').style.display = 'block';
+
+  document.getElementById('groupInput').value = '';
+  document.getElementById('plannedHours').value = '';
+  document.getElementById('studentIdInput').value = '';
+
+  document.getElementById('actionSubmit').textContent = '利用を開始する';
+  document.getElementById('actionModal').style.display = 'flex';
+
+  startScanner();
+}
+
+// バーコード読み取り開始
+async function startScanner() {
+  await stopScanner();
+
+  const generation = ++scannerGeneration;
+  const reader = document.getElementById('reader');
+  reader.innerHTML = '';
+
+  if (typeof Html5Qrcode === 'undefined') {
+    alert('バーコード読み取りライブラリを読み込めません。ページを再読み込みしてください。');
+    return;
+  }
+
+  try {
+    const cameras = await Html5Qrcode.getCameras();
+
+    if (generation !== scannerGeneration) return;
+
+    if (!cameras || cameras.length === 0) {
+      throw new Error('ブラウザから利用できるカメラが見つかりません。');
+    }
+
+    const camera = cameras[0];
+
+    scanner = new Html5Qrcode('reader', {
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.QR_CODE
+      ],
+      verbose: false
+    });
+
+    const currentScanner = scanner;
+
+    scannerStartPromise = currentScanner.start(
+      camera.id,
+      {
+        fps: 10,
+        qrbox: { width: 300, height: 100 }
+      },
+      decodedText => {
+        const value = String(decodedText).trim();
+
+        if (generation !== scannerGeneration) return;
+
+        if (/^B\d{7}$/.test(value)) {
+          document.getElementById('studentIdInput').value = value;
+          stopScanner();
+        } else {
+          document.getElementById('studentIdInput').value = value;
+        }
+      },
+      () => {}
+    );
+
+    await scannerStartPromise;
+
+  } catch (error) {
+    console.error('カメラ起動エラー:', error);
+
+    if (generation === scannerGeneration) {
+      const detail = error && (error.name || error.message)
+        ? (error.name ? error.name + ': ' : '') + (error.message || '')
+        : String(error);
+
+      alert(
+        'カメラを起動できませんでした。\n\n' +
+        '原因：' + detail + '\n\n' +
+        'Chromeのカメラ許可と、ほかのアプリがカメラを使用していないか確認してください。'
+      );
+    }
+  } finally {
+    scannerStartPromise = null;
+  }
+}
+
+// バーコード読み取り停止
+async function stopScanner() {
+  scannerGeneration++;
+
+  if (scannerStopping) return;
+
+  scannerStopping = true;
+
+  try {
+    if (scannerStartPromise) {
+      try {
+        await scannerStartPromise;
+      } catch (error) {}
+    }
+
+    if (scanner) {
+      const current = scanner;
+      scanner = null;
+
+      try {
+        if (current.isScanning) await current.stop();
+      } catch (error) {}
+
+      try {
+        await current.clear();
+      } catch (error) {}
+    }
+
+  } finally {
+    scannerStopping = false;
+  }
+}
+
+// 利用開始確定
+async function submitAction() {
+  if (!selectedEquipment) return;
+
+  const studentId =
+    document.getElementById('studentIdInput').value.trim().toUpperCase();
+
+  const group =
+    document.getElementById('groupInput').value.trim();
+
+  const plannedHours =
+    Number(document.getElementById('plannedHours').value);
+
+  if (!/^B\d{7}$/.test(studentId)) {
+    alert('学籍番号はB＋数字7桁で入力してください。');
+    return;
+  }
+
+  if (!group) {
+    alert('利用区分を選択してください。');
+    return;
+  }
+
+  if (!Number.isFinite(plannedHours) ||
+      plannedHours < 0.25 || plannedHours > 24) {
+    alert('利用予定時間は0.25～24時間で入力してください。');
+    return;
+  }
+
+  const button = document.getElementById('actionSubmit');
+  button.disabled = true;
+  button.textContent = '処理中...';
+
+  await stopScanner();
+
+  google.script.run
+    .withSuccessHandler(message => {
+      alert(message);
+      button.disabled = false;
+      button.textContent = '利用を開始する';
+      closeActionModal();
+      loadEquipment();
+    })
+    .withFailureHandler(error => {
+      alert(error.message || 'エラーが発生しました。');
+      button.disabled = false;
+      button.textContent = '利用を開始する';
+    })
+    .updateEquipment(
+      selectedEquipment.id,
+      studentId,
+      'checkout',
+      group,
+      plannedHours
+    );
+}
+
+// 利用画面を閉じる
+async function closeActionModal() {
+  await stopScanner();
+  document.getElementById('actionModal').style.display = 'none';
+}
+
+// 管理者ログイン
+function openAdminLogin() {
+  document.getElementById('adminPasswordInput').value = '';
+  document.getElementById('adminLoginModal').style.display = 'flex';
+}
+
+function loginAdmin() {
+  const password =
+    document.getElementById('adminPasswordInput').value;
+
+  google.script.run
+    .withSuccessHandler(valid => {
+      if (!valid) {
+        alert('パスワードが違います。');
+        return;
+      }
+
+      adminPassword = password;
+      closeModal('adminLoginModal');
+      document.getElementById('adminModal').style.display = 'flex';
+      loadEquipment();
+    })
+    .withFailureHandler(showError)
+    .verifyAdmin(password);
+}
+
+function closeAdmin() {
+  adminPassword = null;
+  closeModal('adminModal');
+}
+
+// 管理者の利用状況
+function renderAdminUsage() {
+  const list = document.getElementById('adminUsageList');
+  if (!list) return;
+
+  list.innerHTML = '';
+
+  equipmentData.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'admin-item';
+
+    const info = document.createElement('div');
+    info.className = 'admin-item-info';
+
+    const title = document.createElement('strong');
+    title.textContent = item.name;
+    info.appendChild(title);
+
+    const detail = document.createElement('div');
+    detail.className = 'hint';
+
+    detail.textContent = item.inUse
+      ? '使用者：' + item.userName + ' / 区分：' + item.group
+      : '空き';
+
+    info.appendChild(detail);
+    row.appendChild(info);
+
+    if (item.inUse) {
+      const time = document.createElement('div');
+      time.className = 'admin-usage-time';
+      time.dataset.startTime = item.startTime || '';
+      time.textContent = formatDuration(item.startTime);
+      row.appendChild(time);
+
+      const release = document.createElement('button');
+      release.className = 'danger';
+      release.textContent = '強制返却';
+      release.onclick = () => forceRelease(item);
+      row.appendChild(release);
+    }
+
+    list.appendChild(row);
+  });
+}
+
+// 管理者による強制返却
+function forceRelease(item) {
+  if (!confirm(item.name + ' を強制返却しますか？')) return;
+
+  google.script.run
+    .withSuccessHandler(message => {
+      alert(message);
+      loadEquipment();
+    })
+    .withFailureHandler(showError)
+    .adminRelease(item.id, adminPassword);
+}
+
+// 名簿追加（個別）
+function addMember() {
+  const id = document.getElementById('newStudentId').value.trim();
+  const name = document.getElementById('newStudentName').value.trim();
+
+  if (!id || !name) {
+    alert('学籍番号と氏名を入力してください。');
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(message => {
+      alert(message);
+      document.getElementById('newStudentId').value = '';
+      document.getElementById('newStudentName').value = '';
+    })
+    .withFailureHandler(showError)
+    .addRosterMember(id, name, adminPassword);
+}
+
+// 名簿一括追加（CSV）
+async function uploadRosterCsv() {
+  const fileInput = document.getElementById('rosterCsvFile');
+  const file = fileInput.files[0];
+
+  if (!file) {
+    alert('CSVファイルを選択してください。');
+    return;
+  }
+
+  const button = document.getElementById('csvUploadBtn');
+  button.disabled = true;
+  button.textContent = '読み込み中...';
+
+  try {
+    const buffer = await file.arrayBuffer();
+    let text;
+
+    // UTF-8でデコードを試み、文字化け(エラー)ならShift-JISとして読み込む
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    } catch (e) {
+      text = new TextDecoder('shift_jis').decode(buffer);
+    }
+
+    // BOM除去と行分割
+    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+    const members = [];
+
+    lines.forEach((line, idx) => {
+      if (!line.trim()) return;
+
+      // カンマ区切り分割（前後の引用符・空白を除去）
+      const cols = line.split(',').map(col =>
+        col.trim().replace(/^["']|["']$/g, '').trim()
+      );
+
+      if (cols.length < 2) return;
+
+      const id = cols[0].toUpperCase();
+      const name = cols[1];
+
+      // 1行目がヘッダー（「学籍番号」など）の場合はスキップ
+      if (idx === 0 && !/^B\d{7}$/.test(id)) {
+        return;
+      }
+
+      members.push({ id: id, name: name });
+    });
+
+    if (members.length === 0) {
+      alert('有効な名簿データが見つかりませんでした。CSVの形式を確認してください。');
+      button.disabled = false;
+      button.textContent = 'CSVから一括追加';
+      return;
+    }
+
+    google.script.run
+      .withSuccessHandler(message => {
+        alert(message);
+        fileInput.value = '';
+        button.disabled = false;
+        button.textContent = 'CSVから一括追加';
+      })
+      .withFailureHandler(error => {
+        alert(error.message || 'エラーが発生しました。');
+        button.disabled = false;
+        button.textContent = 'CSVから一括追加';
+      })
+      .bulkAddRosterMembers(members, adminPassword);
+
+  } catch (error) {
+    alert('ファイルの読み込みに失敗しました：' + (error.message || error));
+    button.disabled = false;
+    button.textContent = 'CSVから一括追加';
+  }
+}
+
+// 機材追加
+function addNewEquipment() {
+  const id = document.getElementById('newEquipmentId').value.trim();
+  const name = document.getElementById('newEquipmentName').value.trim();
+
+  if (!id || !name) {
+    alert('機材IDと機材名を入力してください。');
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(message => {
+      alert(message);
+      document.getElementById('newEquipmentId').value = '';
+      document.getElementById('newEquipmentName').value = '';
+      loadEquipment();
+    })
+    .withFailureHandler(showError)
+    .addEquipment(id, name, adminPassword);
+}
+
+// 機材名変更一覧
+function renderRenameEquipment() {
+  const list = document.getElementById('renameEquipmentList');
+  if (!list) return;
+
+  list.innerHTML = '';
+
+  equipmentData.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'admin-item';
+
+    const info = document.createElement('div');
+    info.className = 'admin-item-info';
+
+    const input = document.createElement('input');
+    input.value = item.name;
+    input.placeholder = '新しい機材名';
+    input.setAttribute('aria-label', item.name + 'の新しい機材名');
+
+    const button = document.createElement('button');
+    button.className = 'primary';
+    button.textContent = '名前を変更';
+
+    button.onclick = () => {
+      const newName = input.value.trim();
+
+      if (!newName) {
+        alert('新しい機材名を入力してください。');
+        return;
+      }
+
+      if (newName === item.name) {
+        alert('機材名が変更されていません。');
+        return;
+      }
+
+      if (!confirm(
+        item.name + ' を「' + newName + '」に変更しますか？'
+      )) return;
+
+      button.disabled = true;
+
+      google.script.run
+        .withSuccessHandler(message => {
+          alert(message);
+          loadEquipment();
+        })
+        .withFailureHandler(error => {
+          alert(error.message || 'エラーが発生しました。');
+          button.disabled = false;
+        })
+        .renameEquipment(item.id, newName, adminPassword);
+    };
+
+    info.appendChild(input);
+    row.appendChild(info);
+    row.appendChild(button);
+    list.appendChild(row);
+  });
+}
+
+// 管理者パスワード変更
+function changeAdminPassword() {
+  const password =
+    document.getElementById('newAdminPassword').value;
+
+  if (!password || password.length < 4) {
+    alert('新しいパスワードは4文字以上にしてください。');
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(message => {
+      alert(message);
+      adminPassword = password;
+      document.getElementById('newAdminPassword').value = '';
+    })
+    .withFailureHandler(showError)
+    .setAdminPassword(password, adminPassword);
+}
+
+// モーダルを閉じる
+function closeModal(id) {
+  document.getElementById(id).style.display = 'none';
+}
+
+// エラー表示
+function showError(error) {
+  alert(error.message || String(error));
+}
+
+// 全画面切り替え
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen?.();
+  } else {
+    document.exitFullscreen?.();
+  }
+}
+</script>
+
+</body>
+</html>
