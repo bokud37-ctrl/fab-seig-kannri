@@ -173,6 +173,11 @@ input, select {
   color: #202631;
 }
 
+.sync-button {
+  background: #2168d5;
+  color: white;
+}
+
 .button-row {
   display: flex;
   gap: 10px;
@@ -254,6 +259,7 @@ input, select {
   </div>
 
   <div class="button-row">
+    <button class="sync-button" onclick="syncFromGas()">最新に更新</button>
     <button class="fullscreen-button" onclick="toggleFullscreen()">全画面</button>
     <button class="admin-button" onclick="openAdminLogin()">管理者</button>
   </div>
@@ -396,6 +402,8 @@ input, select {
 </div>
 
 <script>
+const GAS_API_URL = 'https://script.google.com/a/macros/seig-boys.jp/s/AKfycbzIn-UXdLnWzAJhvgqDD6x6UKjIWrIG4jVrolGw_wf5hqWZFokMd0NGpgbpx5zfxJku/exec';
+
 let equipmentData = [];
 let selectedEquipment = null;
 let selectedMode = null;
@@ -405,24 +413,111 @@ let scannerStartPromise = null;
 let scannerStopping = false;
 let scannerGeneration = 0;
 
-window.addEventListener('load', () => {
-  loadEquipment();
-  setInterval(loadEquipment, 4000);
-  setInterval(updateUsageTimes, 1000);
-});
-
-// 機材情報取得
-function loadEquipment() {
-  google.script.run
-    .withSuccessHandler(data => {
-      equipmentData = data || [];
-      renderEquipment();
-      renderAdminUsage();
-      renderRenameEquipment();
-    })
-    .withFailureHandler(showError)
-    .getEquipmentStatus();
+// 画面遷移（GET）で最新状況を取得
+function syncFromGas() {
+  sessionStorage.setItem('fablab_synced', '1');
+  const returnUrl = window.location.origin + window.location.pathname;
+  window.location.href = GAS_API_URL + '?returnUrl=' + encodeURIComponent(returnUrl);
 }
+
+// フォーム送信（POST）でデータを書き込んで戻る
+function submitToGas(dataObj) {
+  sessionStorage.setItem('fablab_synced', '1');
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = GAS_API_URL;
+  form.style.display = 'none';
+
+  const input = document.createElement('input');
+  input.type = 'hidden';
+  input.name = 'payload';
+  input.value = JSON.stringify({
+    ...dataObj,
+    returnUrl: window.location.origin + window.location.pathname
+  });
+
+  form.appendChild(input);
+  document.body.appendChild(form);
+  form.submit();
+}
+
+window.addEventListener('load', () => {
+  const params = new URLSearchParams(window.location.search);
+  const rawData = params.get('data');
+  const msg = params.get('msg');
+  const err = params.get('err');
+  const adminOk = params.get('adminOk');
+  const keepAdmin = params.get('keepAdmin');
+  const newAdminPw = params.get('newAdminPw');
+
+  let hasUrlParams = false;
+
+  if (rawData) {
+    hasUrlParams = true;
+    try {
+      equipmentData = JSON.parse(rawData);
+      localStorage.setItem('fablab_equipment_cache', rawData);
+    } catch (e) {
+      console.error('データ解析エラー:', e);
+    }
+  } else {
+    const cached = localStorage.getItem('fablab_equipment_cache');
+    if (cached) {
+      try {
+        equipmentData = JSON.parse(cached);
+      } catch (e) {}
+    }
+  }
+
+  if (msg) hasUrlParams = true;
+  if (err) hasUrlParams = true;
+  if (adminOk) hasUrlParams = true;
+  if (keepAdmin) hasUrlParams = true;
+
+  // URLパラメータを消してアドレスバーをスッキリさせる
+  if (hasUrlParams) {
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+
+  // 初回アクセス時（まだ同期していない場合）は自動でGASから最新データを取得
+  if (!rawData && !sessionStorage.getItem('fablab_synced')) {
+    syncFromGas();
+    return;
+  }
+
+  renderEquipment();
+  renderAdminUsage();
+  renderRenameEquipment();
+  setInterval(updateUsageTimes, 1000);
+
+  // 管理者ログイン直後の復元
+  if (adminOk === '1') {
+    const pendingPw = sessionStorage.getItem('fablab_pending_admin_pw');
+    if (pendingPw) {
+      adminPassword = pendingPw;
+      sessionStorage.setItem('fablab_admin_pw', pendingPw);
+      sessionStorage.removeItem('fablab_pending_admin_pw');
+      document.getElementById('adminModal').style.display = 'flex';
+    }
+  } else if (keepAdmin === '1') {
+    if (newAdminPw) {
+      adminPassword = newAdminPw;
+      sessionStorage.setItem('fablab_admin_pw', newAdminPw);
+    } else {
+      adminPassword = sessionStorage.getItem('fablab_admin_pw');
+    }
+    if (adminPassword) {
+      document.getElementById('adminModal').style.display = 'flex';
+    }
+  }
+
+  if (msg) {
+    setTimeout(() => alert(msg), 100);
+  }
+  if (err) {
+    setTimeout(() => alert(err), 100);
+  }
+});
 
 // 機材カード表示
 function renderEquipment() {
@@ -430,7 +525,7 @@ function renderEquipment() {
   grid.innerHTML = '';
 
   if (!equipmentData.length) {
-    grid.textContent = '機材データがありません。初期設定を確認してください。';
+    grid.innerHTML = '<div class="loading">機材データがありません。右上の「最新に更新」を押すか、GASの初期設定を確認してください。</div>';
     return;
   }
 
@@ -438,7 +533,6 @@ function renderEquipment() {
     const card = document.createElement('div');
     card.className = 'equipment-card' + (item.inUse ? ' busy' : '');
 
-    // 空いている機材だけカード全体を利用開始ボタンにする
     if (!item.inUse) {
       card.onclick = () => openAction(item);
     }
@@ -478,7 +572,6 @@ function renderEquipment() {
       remaining.textContent = getRemainingText(item.plannedEndTime);
       card.appendChild(remaining);
 
-      // ワンタップ返却ボタン
       const returnButton = document.createElement('button');
       returnButton.className = 'quick-return';
       returnButton.textContent = 'この機材を返却する';
@@ -511,13 +604,10 @@ function quickReturn(item) {
     return;
   }
 
-  google.script.run
-    .withSuccessHandler(message => {
-      alert(message);
-      loadEquipment();
-    })
-    .withFailureHandler(showError)
-    .quickReturnEquipment(item.id);
+  submitToGas({
+    action: 'quickReturnEquipment',
+    equipmentId: item.id
+  });
 }
 
 // 利用予定時間表示
@@ -673,7 +763,7 @@ async function startScanner() {
       alert(
         'カメラを起動できませんでした。\n\n' +
         '原因：' + detail + '\n\n' +
-        'Chromeのカメラ許可と、ほかのアプリがカメラを使用していないか確認してください。'
+        'ブラウザのカメラ許可と、ほかのアプリがカメラを使用していないか確認してください。'
       );
     }
   } finally {
@@ -745,30 +835,18 @@ async function submitAction() {
 
   const button = document.getElementById('actionSubmit');
   button.disabled = true;
-  button.textContent = '処理中...';
+  button.textContent = '送信中...';
 
   await stopScanner();
 
-  google.script.run
-    .withSuccessHandler(message => {
-      alert(message);
-      button.disabled = false;
-      button.textContent = '利用を開始する';
-      closeActionModal();
-      loadEquipment();
-    })
-    .withFailureHandler(error => {
-      alert(error.message || 'エラーが発生しました。');
-      button.disabled = false;
-      button.textContent = '利用を開始する';
-    })
-    .updateEquipment(
-      selectedEquipment.id,
-      studentId,
-      'checkout',
-      group,
-      plannedHours
-    );
+  submitToGas({
+    action: 'updateEquipment',
+    equipmentId: selectedEquipment.id,
+    studentId: studentId,
+    mode: 'checkout',
+    group: group,
+    plannedHours: plannedHours
+  });
 }
 
 // 利用画面を閉じる
@@ -787,24 +865,22 @@ function loginAdmin() {
   const password =
     document.getElementById('adminPasswordInput').value;
 
-  google.script.run
-    .withSuccessHandler(valid => {
-      if (!valid) {
-        alert('パスワードが違います。');
-        return;
-      }
+  if (!password) {
+    alert('パスワードを入力してください。');
+    return;
+  }
 
-      adminPassword = password;
-      closeModal('adminLoginModal');
-      document.getElementById('adminModal').style.display = 'flex';
-      loadEquipment();
-    })
-    .withFailureHandler(showError)
-    .verifyAdmin(password);
+  sessionStorage.setItem('fablab_pending_admin_pw', password);
+  submitToGas({
+    action: 'verifyAdmin',
+    password: password
+  });
 }
 
 function closeAdmin() {
   adminPassword = null;
+  sessionStorage.removeItem('fablab_admin_pw');
+  sessionStorage.removeItem('fablab_pending_admin_pw');
   closeModal('adminModal');
 }
 
@@ -858,13 +934,11 @@ function renderAdminUsage() {
 function forceRelease(item) {
   if (!confirm(item.name + ' を強制返却しますか？')) return;
 
-  google.script.run
-    .withSuccessHandler(message => {
-      alert(message);
-      loadEquipment();
-    })
-    .withFailureHandler(showError)
-    .adminRelease(item.id, adminPassword);
+  submitToGas({
+    action: 'adminRelease',
+    equipmentId: item.id,
+    password: adminPassword
+  });
 }
 
 // 名簿追加（個別）
@@ -877,14 +951,12 @@ function addMember() {
     return;
   }
 
-  google.script.run
-    .withSuccessHandler(message => {
-      alert(message);
-      document.getElementById('newStudentId').value = '';
-      document.getElementById('newStudentName').value = '';
-    })
-    .withFailureHandler(showError)
-    .addRosterMember(id, name, adminPassword);
+  submitToGas({
+    action: 'addRosterMember',
+    studentId: id,
+    studentName: name,
+    password: adminPassword
+  });
 }
 
 // 名簿一括追加（CSV）
@@ -905,21 +977,18 @@ async function uploadRosterCsv() {
     const buffer = await file.arrayBuffer();
     let text;
 
-    // UTF-8でデコードを試み、文字化け(エラー)ならShift-JISとして読み込む
     try {
       text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
     } catch (e) {
       text = new TextDecoder('shift_jis').decode(buffer);
     }
 
-    // BOM除去と行分割
     const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
     const members = [];
 
     lines.forEach((line, idx) => {
       if (!line.trim()) return;
 
-      // カンマ区切り分割（前後の引用符・空白を除去）
       const cols = line.split(',').map(col =>
         col.trim().replace(/^["']|["']$/g, '').trim()
       );
@@ -929,7 +998,6 @@ async function uploadRosterCsv() {
       const id = cols[0].toUpperCase();
       const name = cols[1];
 
-      // 1行目がヘッダー（「学籍番号」など）の場合はスキップ
       if (idx === 0 && !/^B\d{7}$/.test(id)) {
         return;
       }
@@ -944,19 +1012,11 @@ async function uploadRosterCsv() {
       return;
     }
 
-    google.script.run
-      .withSuccessHandler(message => {
-        alert(message);
-        fileInput.value = '';
-        button.disabled = false;
-        button.textContent = 'CSVから一括追加';
-      })
-      .withFailureHandler(error => {
-        alert(error.message || 'エラーが発生しました。');
-        button.disabled = false;
-        button.textContent = 'CSVから一括追加';
-      })
-      .bulkAddRosterMembers(members, adminPassword);
+    submitToGas({
+      action: 'bulkAddRosterMembers',
+      members: members,
+      password: adminPassword
+    });
 
   } catch (error) {
     alert('ファイルの読み込みに失敗しました：' + (error.message || error));
@@ -975,15 +1035,12 @@ function addNewEquipment() {
     return;
   }
 
-  google.script.run
-    .withSuccessHandler(message => {
-      alert(message);
-      document.getElementById('newEquipmentId').value = '';
-      document.getElementById('newEquipmentName').value = '';
-      loadEquipment();
-    })
-    .withFailureHandler(showError)
-    .addEquipment(id, name, adminPassword);
+  submitToGas({
+    action: 'addEquipment',
+    equipmentId: id,
+    equipmentName: name,
+    password: adminPassword
+  });
 }
 
 // 機材名変更一覧
@@ -1028,16 +1085,12 @@ function renderRenameEquipment() {
 
       button.disabled = true;
 
-      google.script.run
-        .withSuccessHandler(message => {
-          alert(message);
-          loadEquipment();
-        })
-        .withFailureHandler(error => {
-          alert(error.message || 'エラーが発生しました。');
-          button.disabled = false;
-        })
-        .renameEquipment(item.id, newName, adminPassword);
+      submitToGas({
+        action: 'renameEquipment',
+        equipmentId: item.id,
+        newName: newName,
+        password: adminPassword
+      });
     };
 
     info.appendChild(input);
@@ -1057,24 +1110,16 @@ function changeAdminPassword() {
     return;
   }
 
-  google.script.run
-    .withSuccessHandler(message => {
-      alert(message);
-      adminPassword = password;
-      document.getElementById('newAdminPassword').value = '';
-    })
-    .withFailureHandler(showError)
-    .setAdminPassword(password, adminPassword);
+  submitToGas({
+    action: 'setAdminPassword',
+    newPassword: password,
+    currentPassword: adminPassword
+  });
 }
 
 // モーダルを閉じる
 function closeModal(id) {
   document.getElementById(id).style.display = 'none';
-}
-
-// エラー表示
-function showError(error) {
-  alert(error.message || String(error));
 }
 
 // 全画面切り替え
